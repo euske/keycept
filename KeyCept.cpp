@@ -13,8 +13,7 @@
 #pragma comment(lib, "shell32.lib")
 
 // Constants (you shouldn't change)
-const LPCWSTR KEYCEPT_NAME = L"Keycept";
-const LPCWSTR KEYCEPT_WNDCLASS = L"KeyceptClass";
+const LPCWSTR KEYCEPT_NAME = L"KeyCept";
 static HICON HICON_KEYCEPT_OFF = NULL;
 static HICON HICON_KEYCEPT_ON = NULL;
 enum {
@@ -24,8 +23,9 @@ enum {
 // logging
 static FILE* logfp = NULL;
 
-//  Keycept
+//  KeyCept
 // 
+const LPCWSTR TARGET_WINDOW_CLASS = L"ConsoleWindowClass";
 static HookeyDLL hookeyDLL = {0};
 static KeyHookEntry hooks[] = {
     { 40, 80,   98, 80, },     // DOWN -> VK_2
@@ -33,6 +33,35 @@ static KeyHookEntry hooks[] = {
     { 39, 77,  102, 77, },     // RIGHT -> VK_6
     { 38, 72,  104, 72, },     // UP -> VK_8
 };
+
+typedef struct _KeyCept
+{
+    BOOL enabled;
+    BOOL focused;
+    UINT icon_id;
+    UINT_PTR timer_id;
+    UINT timer_interval;
+} KeyCept;
+
+// keyceptUpdateStatus
+static void keyceptUpdateStatus(KeyCept* self, HWND hWnd)
+{
+    BOOL ison = (self->focused && self->enabled);
+    
+    if (ison) {
+        hookeyDLL.SetKeyHooks(hooks, _countof(hooks));
+    } else {
+        hookeyDLL.SetKeyHooks(NULL, 0);
+    }
+    
+    NOTIFYICONDATA nidata = {0};
+    nidata.cbSize = sizeof(nidata);
+    nidata.hWnd = hWnd;
+    nidata.uID = self->icon_id;
+    nidata.uFlags = NIF_ICON;
+    nidata.hIcon = (ison)? HICON_KEYCEPT_ON : HICON_KEYCEPT_OFF;
+    Shell_NotifyIcon(NIM_MODIFY, &nidata);
+}
 
 //  keyceptWndProc
 //
@@ -49,27 +78,84 @@ static LRESULT CALLBACK keyceptWndProc(
     {
         // Initialization.
 	CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
-        NOTIFYICONDATA nidata = {0};
-        nidata.cbSize = sizeof(nidata);
-        nidata.hWnd = hWnd;
-        nidata.uID = 0;
-        nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nidata.uCallbackMessage = WM_NOTIFY_ICON;
-        nidata.hIcon = HICON_KEYCEPT_OFF;
-        StringCchCopy(nidata.szTip, _countof(nidata.szTip), KEYCEPT_NAME);
-        Shell_NotifyIcon(NIM_ADD, &nidata);
+        KeyCept* self = (KeyCept*)cs->lpCreateParams;
+        if (self != NULL) {
+	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)self);
+            NOTIFYICONDATA nidata = {0};
+            nidata.cbSize = sizeof(nidata);
+            nidata.hWnd = hWnd;
+            nidata.uID = self->icon_id;
+            nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            nidata.uCallbackMessage = WM_NOTIFY_ICON;
+            nidata.hIcon = HICON_KEYCEPT_OFF;
+            StringCchCopy(nidata.szTip, _countof(nidata.szTip), KEYCEPT_NAME);
+            Shell_NotifyIcon(NIM_ADD, &nidata);
+            SetTimer(hWnd, self->timer_id, self->timer_interval, NULL);
+        }
 	return FALSE;
     }
     
     case WM_DESTROY:
     {
         // Clean up.
-        NOTIFYICONDATA nidata = {0};
-        nidata.cbSize = sizeof(nidata);
-        nidata.hWnd = hWnd;
-        nidata.uID = 0;
-        Shell_NotifyIcon(NIM_DELETE, &nidata);
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        if (self != NULL) {
+            KillTimer(hWnd, self->timer_id);
+	    // Unregister the icon.
+            NOTIFYICONDATA nidata = {0};
+            nidata.cbSize = sizeof(nidata);
+            nidata.hWnd = hWnd;
+            nidata.uID = self->icon_id;
+            Shell_NotifyIcon(NIM_DELETE, &nidata);
+        }
 	PostQuitMessage(0);
+	return FALSE;
+    }
+
+    case WM_TIMER:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        if (self != NULL) {
+            HWND fHwnd = GetForegroundWindow();
+            WCHAR name[256];
+            if (GetClassName(fHwnd, name, _countof(name)-1)) {
+                self->focused = (wcscmp(name, TARGET_WINDOW_CLASS) == 0);
+                keyceptUpdateStatus(self, hWnd);
+            }
+        }
+        return FALSE;
+    }
+
+    case WM_COMMAND:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        // Command specified.
+	switch (LOWORD(wParam)) {
+        case IDM_TOGGLE:
+            if (self != NULL) {
+                HMENU menu = GetMenu(hWnd);
+                self->enabled = !self->enabled;
+                if (menu != NULL) {
+                    menu = GetSubMenu(menu, 0);
+                    if (menu != NULL) {
+                        MENUITEMINFO info = {0};
+                        info.cbSize = sizeof(info);
+                        info.fMask = MIIM_STATE;
+                        info.fState = (self->enabled)? MFS_CHECKED : MFS_UNCHECKED;
+                        info.fState |= MFS_DEFAULT;
+                        SetMenuItemInfo(menu, IDM_TOGGLE, FALSE, &info);
+                    }
+                }
+                keyceptUpdateStatus(self, hWnd);
+            }
+            break;
+	case IDM_EXIT:
+	    SendMessage(hWnd, WM_CLOSE, 0, 0);
+	    break;
+	}
 	return FALSE;
     }
 
@@ -104,55 +190,6 @@ static LRESULT CALLBACK keyceptWndProc(
 	return FALSE;
     }
 
-    case WM_COMMAND:
-    {
-        // Command specified.
-	switch (LOWORD(wParam)) {
-        case IDM_TURNON:
-            hookeyDLL.SetKeyHooks(hooks, _countof(hooks));
-            {
-                NOTIFYICONDATA nidata = {0};
-                nidata.cbSize = sizeof(nidata);
-                nidata.hWnd = hWnd;
-                nidata.uID = 0;
-                nidata.uFlags = NIF_ICON;
-                nidata.hIcon = HICON_KEYCEPT_ON;
-                Shell_NotifyIcon(NIM_MODIFY, &nidata);
-                HMENU menu = GetMenu(hWnd);
-                if (menu != NULL) {
-                    menu = GetSubMenu(menu, 0);
-                    if (menu != NULL) {
-                        SetMenuDefaultItem(menu, IDM_TURNOFF, FALSE);
-                    }
-                }
-            }
-            break;
-        case IDM_TURNOFF:
-            hookeyDLL.SetKeyHooks(NULL, 0);
-            {
-                NOTIFYICONDATA nidata = {0};
-                nidata.cbSize = sizeof(nidata);
-                nidata.hWnd = hWnd;
-                nidata.uID = 0;
-                nidata.uFlags = NIF_ICON;
-                nidata.hIcon = HICON_KEYCEPT_OFF;
-                Shell_NotifyIcon(NIM_MODIFY, &nidata);
-                HMENU menu = GetMenu(hWnd);
-                if (menu != NULL) {
-                    menu = GetSubMenu(menu, 0);
-                    if (menu != NULL) {
-                        SetMenuDefaultItem(menu, IDM_TURNON, FALSE);
-                    }
-                }
-            }
-            break;
-	case IDM_EXIT:
-	    SendMessage(hWnd, WM_CLOSE, 0, 0);
-	    break;
-	}
-	return FALSE;
-    }
-
     case WM_CLOSE:
 	DestroyWindow(hWnd);
 	return FALSE;
@@ -163,9 +200,9 @@ static LRESULT CALLBACK keyceptWndProc(
 }
 
 
-//  KeyceptMain
+//  KeyCeptMain
 // 
-int KeyceptMain(
+int KeyCeptMain(
     HINSTANCE hInstance, 
     HINSTANCE hPrevInstance, 
     int nCmdShow,
@@ -202,9 +239,18 @@ int KeyceptMain(
 	klass.hIcon = HICON_KEYCEPT_OFF;
 	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
         klass.lpszMenuName = MAKEINTRESOURCE(IDM_POPUPMENU);
-	klass.lpszClassName = KEYCEPT_WNDCLASS;
+	klass.lpszClassName = L"KeyCeptWindowClass";
 	atom = RegisterClass(&klass);
     }
+
+    // Create a structure.
+    KeyCept* keycept = (KeyCept*) calloc(1, sizeof(KeyCept));
+    if (keycept == NULL) return 111;
+    keycept->enabled = FALSE;
+    keycept->focused = FALSE;
+    keycept->icon_id = 1;
+    keycept->timer_id = 1;
+    keycept->timer_interval = 500;
     
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
@@ -213,7 +259,7 @@ int KeyceptMain(
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
-	NULL, NULL, hInstance, NULL);
+	NULL, NULL, hInstance, keycept);
     UpdateWindow(hWnd);
     {
         // Set the default item.
@@ -221,7 +267,7 @@ int KeyceptMain(
         if (menu != NULL) {
             menu = GetSubMenu(menu, 0);
             if (menu != NULL) {
-                SetMenuDefaultItem(menu, IDM_TURNON, FALSE);
+                SetMenuDefaultItem(menu, IDM_TOGGLE, FALSE);
             }
         }
     }
@@ -233,6 +279,7 @@ int KeyceptMain(
         DispatchMessage(&msg);
     }
 
+    free(keycept);
     FreeLibrary(module);
 
     return (int)msg.wParam;
@@ -248,12 +295,12 @@ int WinMain(HINSTANCE hInstance,
 {
     int argc;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    return KeyceptMain(hInstance, hPrevInstance, nCmdShow, argc, argv);
+    return KeyCeptMain(hInstance, hPrevInstance, nCmdShow, argc, argv);
 }
 #else
 int wmain(int argc, wchar_t* argv[])
 {
     logfp = stderr;
-    return KeyceptMain(GetModuleHandle(NULL), NULL, 0, argc, argv);
+    return KeyCeptMain(GetModuleHandle(NULL), NULL, 0, argc, argv);
 }
 #endif

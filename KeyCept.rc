@@ -37,8 +37,7 @@ IDM_POPUPMENU MENU
 BEGIN
     POPUP "&File"
     BEGIN
-        MENUITEM "Turn O&n", IDM_TURNON
-        MENUITEM "Turn O&ff", IDM_TURNOFF
+        MENUITEM "&On/Off", IDM_TOGGLE
         MENUITEM "E&xit", IDM_EXIT
     END
 END

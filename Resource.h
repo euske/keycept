@@ -2,5 +2,4 @@
 #define IDI_KEYCEPT_ON 101
 #define IDM_POPUPMENU 100
 #define IDM_EXIT 101
-#define IDM_TURNON 102
-#define IDM_TURNOFF 103
+#define IDM_TOGGLE 102

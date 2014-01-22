@@ -50,7 +50,7 @@ static LRESULT CALLBACK keyboardProc(
             DWORD scanCode = kdb->scanCode;
             if (findKeyHook(&vkCode, &scanCode)) {
                 if (_logfp != NULL) {
-                    fprintf(_logfp, "INJECT: vkCode=%u, scanCode=%u\n", vkCode, scanCode);
+                    fprintf(_logfp, " INJECT: vkCode=%u, scanCode=%u\n", vkCode, scanCode);
                 }
                 DWORD flags = 0;
                 if ((kdb->flags & LLKHF_EXTENDED) == LLKHF_EXTENDED) {
