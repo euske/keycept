@@ -1,0 +1,44 @@
+#include <Windows.h>
+#include "Resource.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    	1,0,0,0
+PRODUCTVERSION 	1,0,0,0
+FILEFLAGSMASK  	VS_FFI_FILEFLAGSMASK
+FILEFLAGS      	0L
+FILEOS         	VOS__WINDOWS32
+FILETYPE       	VFT_APP
+FILESUBTYPE     0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "LegalCopyright",   "(C) Yusuke Shinyama"
+            VALUE "ProductName",      "KeyCept"
+            VALUE "ProductVersion",   "1.0.0.0"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "FileDescription",  "KeyCept Application"
+            VALUE "InternalName",     "keycept.exe"
+            VALUE "OriginalFilename", "keycept.exe"
+        END
+    END
+
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END
+
+IDI_KEYCEPT_OFF ICON "KeyCeptOff.ico"
+IDI_KEYCEPT_ON ICON "KeyCeptOn.ico"
+
+IDM_POPUPMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "Turn O&n", IDM_TURNON
+        MENUITEM "Turn O&ff", IDM_TURNOFF
+        MENUITEM "E&xit", IDM_EXIT
+    END
+END
