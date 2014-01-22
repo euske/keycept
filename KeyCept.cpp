@@ -11,9 +11,11 @@
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "gdi32.lib")
 
 // Constants (you shouldn't change)
 const LPCWSTR KEYCEPT_NAME = L"KeyCept";
+const LPCWSTR KEYCEPT_PANEL_NAME = L"Panel";
 static HICON HICON_KEYCEPT_OFF = NULL;
 static HICON HICON_KEYCEPT_ON = NULL;
 enum {
@@ -36,6 +38,11 @@ static KeyHookEntry hooks[] = {
 
 typedef struct _KeyCept
 {
+    ATOM panelWindowAtom;
+    HWND panelHWnd;
+    DWORD lastKeyCode;
+    DWORD lastScanCode;
+
     BOOL enabled;
     BOOL focused;
     UINT icon_id;
@@ -63,9 +70,10 @@ static void keyceptUpdateStatus(KeyCept* self, HWND hWnd)
     Shell_NotifyIcon(NIM_MODIFY, &nidata);
 }
 
-//  keyceptWndProc
+
+//  keyceptPanelWndProc
 //
-static LRESULT CALLBACK keyceptWndProc(
+static LRESULT CALLBACK keyceptPanelWndProc(
     HWND hWnd,
     UINT uMsg,
     WPARAM wParam,
@@ -79,6 +87,86 @@ static LRESULT CALLBACK keyceptWndProc(
         // Initialization.
 	CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
         KeyCept* self = (KeyCept*)cs->lpCreateParams;
+        if (self != NULL) {
+	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)self);
+        }
+	return FALSE;
+    }
+
+    case WM_KEYDOWN:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        if (self != NULL) {
+            self->lastKeyCode = wParam;
+            self->lastScanCode = ((lParam >> 16) & 0xff);
+            InvalidateRect(hWnd, NULL, TRUE);
+        }
+    }
+    return FALSE;
+    
+    case WM_PAINT:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        if (self != NULL) {
+            PAINTSTRUCT ps;
+            WCHAR text[256];
+            StringCchPrintf(text, _countof(text), 
+                            L"KeyCode=%d, ScanCode=%d", 
+                            self->lastKeyCode, self->lastScanCode);
+            HDC hdc = BeginPaint(hWnd, &ps);
+            TextOut(hdc, 0, 0, text, wcslen(text));
+            EndPaint(hWnd, &ps);
+        }
+	return FALSE;
+    }
+    return FALSE;
+
+    case WM_TIMER:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCept* self = (KeyCept*)lp;
+        if (self != NULL) {
+        }
+        return FALSE;
+    }
+
+    case WM_CLOSE:
+	ShowWindow(hWnd, SW_HIDE);
+	return FALSE;
+
+    default:
+	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+    }
+}
+
+//  keyceptTrayWndProc
+//
+static LRESULT CALLBACK keyceptTrayWndProc(
+    HWND hWnd,
+    UINT uMsg,
+    WPARAM wParam,
+    LPARAM lParam)
+{
+    //fwprintf(stderr, L"msg: %x, hWnd=%p, wParam=%p\n", uMsg, hWnd, wParam);
+
+    switch (uMsg) {
+    case WM_CREATE:
+    {
+        // Initialization.
+	CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
+        KeyCept* self = (KeyCept*)cs->lpCreateParams;
+        {
+            // Set the default item.
+            HMENU menu = GetMenu(hWnd);
+            if (menu != NULL) {
+                menu = GetSubMenu(menu, 0);
+                if (menu != NULL) {
+                    SetMenuDefaultItem(menu, IDM_TOGGLE, FALSE);
+                }
+            }
+        }
         if (self != NULL) {
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)self);
             NOTIFYICONDATA nidata = {0};
@@ -152,6 +240,23 @@ static LRESULT CALLBACK keyceptWndProc(
                 keyceptUpdateStatus(self, hWnd);
             }
             break;
+
+        case IDM_OPEN_PANEL:
+            if (self != NULL) {
+                if (self->panelHWnd == NULL) {
+                    self->panelHWnd = CreateWindowEx(
+                        (WS_EX_TOOLWINDOW | WS_EX_TOPMOST),
+                        (LPCWSTR)self->panelWindowAtom,
+                        KEYCEPT_PANEL_NAME,
+                        (WS_OVERLAPPED | WS_SYSMENU),
+                        CW_USEDEFAULT, CW_USEDEFAULT,
+                        300, 200,
+                        NULL, NULL, GetModuleHandle(NULL), self);
+                }
+                ShowWindow(self->panelHWnd, SW_SHOWDEFAULT);
+            }
+            break;
+
 	case IDM_EXIT:
 	    SendMessage(hWnd, WM_CLOSE, 0, 0);
 	    break;
@@ -229,20 +334,6 @@ int KeyCeptMain(
 
     hookeyDLL.SetLogFile(logfp);
 
-    // Register the window class.
-    ATOM atom;
-    {
-	WNDCLASS klass;
-	ZeroMemory(&klass, sizeof(klass));
-	klass.lpfnWndProc = keyceptWndProc;
-	klass.hInstance = hInstance;
-	klass.hIcon = HICON_KEYCEPT_OFF;
-	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-        klass.lpszMenuName = MAKEINTRESOURCE(IDM_POPUPMENU);
-	klass.lpszClassName = L"KeyCeptWindowClass";
-	atom = RegisterClass(&klass);
-    }
-
     // Create a structure.
     KeyCept* keycept = (KeyCept*) calloc(1, sizeof(KeyCept));
     if (keycept == NULL) return 111;
@@ -251,26 +342,35 @@ int KeyCeptMain(
     keycept->icon_id = 1;
     keycept->timer_id = 1;
     keycept->timer_interval = 500;
-    
+
+    // Register the window class.
+    ATOM trayWindowAtom;
+    {
+	WNDCLASS klass;
+	ZeroMemory(&klass, sizeof(klass));
+	klass.lpfnWndProc = keyceptTrayWndProc;
+	klass.hInstance = hInstance;
+	klass.hIcon = HICON_KEYCEPT_OFF;
+	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+        klass.lpszMenuName = MAKEINTRESOURCE(IDM_POPUPMENU);
+	klass.lpszClassName = L"KeyCeptTrayWindowClass";
+	trayWindowAtom = RegisterClass(&klass);
+
+	klass.lpfnWndProc = keyceptPanelWndProc;
+	klass.lpszClassName = L"KeyCeptPanelWindowClass";
+        klass.lpszMenuName = NULL;
+	keycept->panelWindowAtom = RegisterClass(&klass);
+    }
+
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
-	(LPCWSTR)atom,
+	(LPCWSTR)trayWindowAtom,
 	KEYCEPT_NAME,
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	NULL, NULL, hInstance, keycept);
     UpdateWindow(hWnd);
-    {
-        // Set the default item.
-        HMENU menu = GetMenu(hWnd);
-        if (menu != NULL) {
-            menu = GetSubMenu(menu, 0);
-            if (menu != NULL) {
-                SetMenuDefaultItem(menu, IDM_TOGGLE, FALSE);
-            }
-        }
-    }
 
     // Event loop.
     MSG msg;

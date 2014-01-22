@@ -3,3 +3,4 @@
 #define IDM_POPUPMENU 100
 #define IDM_EXIT 101
 #define IDM_TOGGLE 102
+#define IDM_OPEN_PANEL 103

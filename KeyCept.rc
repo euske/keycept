@@ -38,6 +38,8 @@ BEGIN
     POPUP "&File"
     BEGIN
         MENUITEM "&On/Off", IDM_TOGGLE
+        MENUITEM "Open Keycode Panel...", IDM_OPEN_PANEL
+        MENUITEM SEPARATOR
         MENUITEM "E&xit", IDM_EXIT
     END
 END
