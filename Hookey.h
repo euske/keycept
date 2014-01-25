@@ -13,9 +13,11 @@ typedef struct _KeyHookEntry
 
 typedef void (*pSetLogFile)(FILE* logfp);
 typedef void (*pSetKeyHooks)(KeyHookEntry* entries, unsigned int nentries);
+typedef void (*pGetLastKey)(DWORD* vkCode, DWORD* scanCode);
 
 typedef struct _HookeyDLL
 {
     pSetLogFile SetLogFile;
     pSetKeyHooks SetKeyHooks;
+    pGetLastKey GetLastKey;
 } HookeyDLL;

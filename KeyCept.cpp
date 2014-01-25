@@ -16,14 +16,15 @@
 // Constants (you shouldn't change)
 const LPCWSTR KEYCEPT_NAME = L"KeyCept";
 enum {
-    WM_NOTIFY_ICON = WM_USER+1,
+    WM_USER_ICON_EVENT = WM_USER+1,
+    WM_USER_STATE_CHANGED,
+    WM_USER_ICON_CHANGED,
+    WM_USER_KEYCODE_CHANGED,
+    WM_USER_WINDOW_CHANGED,
 };
 
 // logging file.
 static FILE* logfp = NULL;
-
-// Hookey DLL
-static HookeyDLL hookeyDLL = {0};
 
 //  KeyCept
 // 
@@ -37,38 +38,46 @@ static KeyHookEntry hooks[] = {
 
 typedef struct _KeyCeptSettings
 {
+    HMODULE module;
+    HookeyDLL hookeyDLL;
     ATOM trayWindowAtom;
     LPCWSTR trayName;
-    ATOM dialogWindowAtom;
-    LPCWSTR dialogName;
     HICON iconKeyCeptOff;
     HICON iconKeyCeptOn;
     UINT timerInterval;
+    HWND dialogHWnd;
+    BOOL enabled;
 } KeyCeptSettings;
 
+
+//  keyceptUpdateStatus
+//
+static BOOL keyceptUpdateStatus(KeyCeptSettings* settings, HWND hWnd)
+{
+    BOOL ison = settings->enabled;
+    WCHAR name[256];
+    if (ison && GetClassName(hWnd, name, _countof(name)-1)) {
+        ison = (wcscmp(name, TARGET_WINDOW_CLASS) == 0);
+    }
+    
+    if (ison) {
+        settings->hookeyDLL.SetKeyHooks(hooks, _countof(hooks));
+    } else {
+        settings->hookeyDLL.SetKeyHooks(NULL, 0);
+    }
+
+    return ison;
+}
+
+
+//  keyceptDialogProc
+//
 typedef struct _KeyCeptDialog
 {
     KeyCeptSettings* settings;
-    DWORD lastVkCode;
-    DWORD lastScanCode;
-    HWND lastFHWnd;
-    UINT_PTR timerId;
 } KeyCeptDialog;
 
-typedef struct _KeyCeptTray
-{
-    KeyCeptSettings* settings;
-    HWND dialogHWnd;
-    BOOL enabled;
-    BOOL focused;
-    UINT iconId;
-    UINT_PTR timerId;
-} KeyCeptTray;
-
-
-//  keyceptDialogWndProc
-//
-static LRESULT CALLBACK keyceptDialogWndProc(
+static INT_PTR CALLBACK keyceptDialogProc(
     HWND hWnd,
     UINT uMsg,
     WPARAM wParam,
@@ -77,21 +86,17 @@ static LRESULT CALLBACK keyceptDialogWndProc(
     //fwprintf(stderr, L"msg: %x, hWnd=%p, wParam=%p\n", uMsg, hWnd, wParam);
 
     switch (uMsg) {
-    case WM_CREATE:
+    case WM_INITDIALOG:
     {
         // Initialization.
-	CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
-        KeyCeptSettings* settings = (KeyCeptSettings*)cs->lpCreateParams;
+        KeyCeptSettings* settings = (KeyCeptSettings*)lParam;
         // Create the data structure.
         KeyCeptDialog* self = (KeyCeptDialog*) calloc(1, sizeof(KeyCeptDialog));
         if (self != NULL) {
             self->settings = settings;
-            self->timerId = 1;
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)self);
-            // Create a timer.
-            SetTimer(hWnd, self->timerId, self->settings->timerInterval, NULL);
         }
-	return FALSE;
+	return TRUE;
     }
 
     case WM_DESTROY:
@@ -100,8 +105,6 @@ static LRESULT CALLBACK keyceptDialogWndProc(
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
         KeyCeptDialog* self = (KeyCeptDialog*)lp;
         if (self != NULL) {
-            // Destroy the timer.
-            KillTimer(hWnd, self->timerId);
             // Destroy the data structure.
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)NULL);
             free(self);
@@ -109,103 +112,53 @@ static LRESULT CALLBACK keyceptDialogWndProc(
 	return FALSE;
     }
 
-    case WM_KEYDOWN:
+    case WM_CLOSE:
+	ShowWindow(hWnd, SW_HIDE);
+	return FALSE;
+
+    case WM_USER_KEYCODE_CHANGED:
     {
-	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-        KeyCeptDialog* self = (KeyCeptDialog*)lp;
-        if (self != NULL) {
-            DWORD vkCode = wParam;
-            DWORD scanCode = ((lParam >> 16) & 0xff);
-            if (vkCode != self->lastVkCode ||
-                scanCode != self->lastScanCode) {
-                self->lastVkCode = vkCode;
-                self->lastScanCode = scanCode;
-                InvalidateRect(hWnd, NULL, TRUE);
-            }
-        }
+        DWORD vkCode = (DWORD)wParam;
+        DWORD scanCode = (DWORD)lParam;
+        WCHAR text[256];
+        StringCchPrintf(text, _countof(text), 
+                        L"KeyCode=%d, ScanCode=%d", vkCode, scanCode);
+        SetDlgItemText(hWnd, IDC_TEXT_KEYCODE, text);
+        return FALSE;
     }
-    return FALSE;
-    
-    case WM_TIMER:
+
+    case WM_USER_WINDOW_CHANGED:
     {
-	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-        KeyCeptDialog* self = (KeyCeptDialog*)lp;
-        if (self != NULL) {
-            HWND fHWnd = GetForegroundWindow();
-            if (fHWnd != self->lastFHWnd) {
-                self->lastFHWnd = fHWnd;
-                InvalidateRect(hWnd, NULL, TRUE);
+        HWND fHWnd = (HWND)lParam;
+        if (fHWnd != hWnd) {
+            WCHAR name[256];
+            if (GetClassName(fHWnd, name, _countof(name)-1)) {
+                WCHAR text[256];
+                StringCchPrintf(text, _countof(text), L"[%s]", name);
+                SetDlgItemText(hWnd, IDC_TEXT_WINDOW, text);
             }
         }
         return FALSE;
     }
 
-    case WM_PAINT:
-    {
-	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-        KeyCeptDialog* self = (KeyCeptDialog*)lp;
-        if (self != NULL) {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            WCHAR text[256];
-            StringCchPrintf(text, _countof(text), 
-                            L"KeyCode=%d, ScanCode=%d", 
-                            self->lastVkCode, self->lastScanCode);
-            TextOut(hdc, 0, 0, text, wcslen(text));
-            GetClassName(self->lastFHWnd, text, _countof(text)-1);
-            TextOut(hdc, 0, 40, text, wcslen(text));
-            EndPaint(hWnd, &ps);
-        }
-	return FALSE;
-    }
-    return FALSE;
-
-    case WM_CLOSE:
-	ShowWindow(hWnd, SW_HIDE);
-	return FALSE;
-
     default:
-	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+        return FALSE;
     }
 }
-
-static INT_PTR CALLBACK keyceptDialogProc(
-    HWND hWnd,
-    UINT uMsg,
-    WPARAM wParam,
-    LPARAM lParam)
-{
-    fwprintf(stderr, L"msg: %x, hWnd=%p, wParam=%p\n", uMsg, hWnd, wParam);
-    return FALSE;
-}
     
-
-//  keyceptUpdateStatus
-//
-static void keyceptUpdateStatus(KeyCeptTray* self, HWND hWnd)
-{
-    BOOL ison = (self->focused && self->enabled);
-    
-    if (ison) {
-        hookeyDLL.SetKeyHooks(hooks, _countof(hooks));
-    } else {
-        hookeyDLL.SetKeyHooks(NULL, 0);
-    }
-    
-    NOTIFYICONDATA nidata = {0};
-    nidata.cbSize = sizeof(nidata);
-    nidata.hWnd = hWnd;
-    nidata.uID = self->iconId;
-    nidata.uFlags = NIF_ICON;
-    nidata.hIcon = ((ison)? 
-                    self->settings->iconKeyCeptOn : 
-                    self->settings->iconKeyCeptOff);
-    Shell_NotifyIcon(NIM_MODIFY, &nidata);
-}
-
 
 //  keyceptTrayWndProc
 //
+typedef struct _KeyCeptTray
+{
+    KeyCeptSettings* settings;
+    UINT iconId;
+    UINT_PTR timerId;
+    HWND lastFHWnd;
+    DWORD lastVkCode;
+    DWORD lastScanCode;
+} KeyCeptTray;
+
 static LRESULT CALLBACK keyceptTrayWndProc(
     HWND hWnd,
     UINT uMsg,
@@ -234,10 +187,13 @@ static LRESULT CALLBACK keyceptTrayWndProc(
         KeyCeptTray* self = (KeyCeptTray*) calloc(1, sizeof(KeyCeptTray));
         if (self != NULL) {
             self->settings = settings;
-            self->enabled = FALSE;
-            self->focused = FALSE;
             self->iconId = 1;
             self->timerId = 1;
+            self->lastFHWnd = NULL;
+            self->settings->dialogHWnd = CreateDialogParam(
+                cs->hInstance,
+                MAKEINTRESOURCE(IDD_CONFIG_PANEL),
+                hWnd, keyceptDialogProc, (LPARAM)self->settings);
 
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)self);
             NOTIFYICONDATA nidata = {0};
@@ -245,15 +201,13 @@ static LRESULT CALLBACK keyceptTrayWndProc(
             nidata.hWnd = hWnd;
             nidata.uID = self->iconId;
             nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-            nidata.uCallbackMessage = WM_NOTIFY_ICON;
+            nidata.uCallbackMessage = WM_USER_ICON_EVENT;
             nidata.hIcon = self->settings->iconKeyCeptOff;
             StringCchCopy(nidata.szTip, _countof(nidata.szTip), KEYCEPT_NAME);
             Shell_NotifyIcon(NIM_ADD, &nidata);
             SetTimer(hWnd, self->timerId, self->settings->timerInterval, NULL);
-            self->dialogHWnd = CreateDialogParam(
-                cs->hInstance,
-                MAKEINTRESOURCE(IDD_CONFIG_PANEL),
-                hWnd, keyceptDialogProc, NULL);
+            SendMessage(hWnd, WM_USER_STATE_CHANGED, 
+                        (WPARAM)(self->settings->enabled), 0);
         }
 	return FALSE;
     }
@@ -267,9 +221,9 @@ static LRESULT CALLBACK keyceptTrayWndProc(
             // Destroy the timer.
             KillTimer(hWnd, self->timerId);
             // Cleanup the child window.
-            if (self->dialogHWnd != NULL) {
-                DestroyWindow(self->dialogHWnd);
-                self->dialogHWnd = NULL;
+            if (self->settings->dialogHWnd != NULL) {
+                DestroyWindow(self->settings->dialogHWnd);
+                self->settings->dialogHWnd = NULL;
             }
 	    // Unregister the icon.
             NOTIFYICONDATA nidata = {0};
@@ -285,20 +239,9 @@ static LRESULT CALLBACK keyceptTrayWndProc(
 	return FALSE;
     }
 
-    case WM_TIMER:
-    {
-	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-        KeyCeptTray* self = (KeyCeptTray*)lp;
-        if (self != NULL) {
-            HWND fHWnd = GetForegroundWindow();
-            WCHAR name[256];
-            if (GetClassName(fHWnd, name, _countof(name)-1)) {
-                self->focused = (wcscmp(name, TARGET_WINDOW_CLASS) == 0);
-                keyceptUpdateStatus(self, hWnd);
-            }
-        }
-        return FALSE;
-    }
+    case WM_CLOSE:
+	DestroyWindow(hWnd);
+	return FALSE;
 
     case WM_COMMAND:
     {
@@ -308,26 +251,14 @@ static LRESULT CALLBACK keyceptTrayWndProc(
 	switch (LOWORD(wParam)) {
         case IDM_TOGGLE:
             if (self != NULL) {
-                HMENU menu = GetMenu(hWnd);
-                self->enabled = !self->enabled;
-                if (menu != NULL) {
-                    menu = GetSubMenu(menu, 0);
-                    if (menu != NULL) {
-                        MENUITEMINFO info = {0};
-                        info.cbSize = sizeof(info);
-                        info.fMask = MIIM_STATE;
-                        info.fState = (self->enabled)? MFS_CHECKED : MFS_UNCHECKED;
-                        info.fState |= MFS_DEFAULT;
-                        SetMenuItemInfo(menu, IDM_TOGGLE, FALSE, &info);
-                    }
-                }
-                keyceptUpdateStatus(self, hWnd);
+                SendMessage(hWnd, WM_USER_STATE_CHANGED, 
+                            (WPARAM)(!self->settings->enabled), 0);
             }
             break;
 
         case IDM_CONFIG:
-            if (self != NULL) {
-                ShowWindow(self->dialogHWnd, SW_SHOWDEFAULT);
+            if (self != NULL && self->settings->dialogHWnd != NULL) {
+                ShowWindow(self->settings->dialogHWnd, SW_SHOWDEFAULT);
             }
             break;
 
@@ -338,7 +269,100 @@ static LRESULT CALLBACK keyceptTrayWndProc(
 	return FALSE;
     }
 
-    case WM_NOTIFY_ICON:
+    case WM_TIMER:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCeptTray* self = (KeyCeptTray*)lp;
+        if (self != NULL) {
+            DWORD vkCode, scanCode;
+            self->settings->hookeyDLL.GetLastKey(&vkCode, &scanCode);
+            if (self->lastVkCode != vkCode ||
+                self->lastScanCode != scanCode) {
+                self->lastVkCode = vkCode;
+                self->lastScanCode = scanCode;
+                SendMessage(hWnd, WM_USER_KEYCODE_CHANGED, 
+                            (WPARAM)vkCode, (LPARAM)scanCode);
+            }
+            HWND fHWnd = GetForegroundWindow();
+            if (self->lastFHWnd != fHWnd) {
+                self->lastFHWnd = fHWnd;
+                SendMessage(hWnd, WM_USER_WINDOW_CHANGED, 
+                            0, (LPARAM)fHWnd);
+            }
+        }
+        return FALSE;
+    }
+
+    case WM_USER_STATE_CHANGED:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCeptTray* self = (KeyCeptTray*)lp;
+        if (self != NULL) {
+            HMENU menu = GetMenu(hWnd);
+            if (menu != NULL) {
+                menu = GetSubMenu(menu, 0);
+                if (menu != NULL) {
+                    MENUITEMINFO info = {0};
+                    info.cbSize = sizeof(info);
+                    info.fMask = MIIM_STATE;
+                    info.fState = (((BOOL)wParam)?
+                                   MFS_CHECKED : 
+                                   MFS_UNCHECKED);
+                    info.fState |= MFS_DEFAULT;
+                    SetMenuItemInfo(menu, IDM_TOGGLE, FALSE, &info);
+                }
+            }
+            BOOL ison = keyceptUpdateStatus(self->settings, self->lastFHWnd);
+            SendMessage(hWnd, WM_USER_ICON_CHANGED, ison, 0);
+        }
+        return FALSE;
+    }
+
+    case WM_USER_KEYCODE_CHANGED:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCeptTray* self = (KeyCeptTray*)lp;
+        if (self != NULL) {
+            if (self->settings->dialogHWnd != NULL) {
+                SendMessage(self->settings->dialogHWnd, uMsg, wParam, lParam);
+            }
+        }
+        return FALSE;
+    }
+
+    case WM_USER_WINDOW_CHANGED:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCeptTray* self = (KeyCeptTray*)lp;
+        if (self != NULL) {
+            if (self->settings->dialogHWnd != NULL) {
+                SendMessage(self->settings->dialogHWnd, uMsg, wParam, lParam);
+            }
+            BOOL ison = keyceptUpdateStatus(self->settings, (HWND)lParam);
+            SendMessage(hWnd, WM_USER_ICON_CHANGED, ison, 0);
+        }
+        return FALSE;
+    }
+
+    case WM_USER_ICON_CHANGED:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        KeyCeptTray* self = (KeyCeptTray*)lp;
+        if (self != NULL) {
+            NOTIFYICONDATA nidata = {0};
+            nidata.cbSize = sizeof(nidata);
+            nidata.hWnd = hWnd;
+            nidata.uID = self->iconId;
+            nidata.uFlags = NIF_ICON;
+            nidata.hIcon = ((wParam)? 
+                            self->settings->iconKeyCeptOn : 
+                            self->settings->iconKeyCeptOff);
+            Shell_NotifyIcon(NIM_MODIFY, &nidata);
+        }
+        return FALSE;
+    }
+    
+    case WM_USER_ICON_EVENT:
     {
         // UI event handling.
 	POINT pt;
@@ -369,10 +393,6 @@ static LRESULT CALLBACK keyceptTrayWndProc(
 	return FALSE;
     }
 
-    case WM_CLOSE:
-	DestroyWindow(hWnd);
-	return FALSE;
-
     default:
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
     }
@@ -394,25 +414,27 @@ int KeyCeptMain(
 	return 0;
     }
   
-    // Load a DLL.
-    HMODULE module = LoadLibrary(L"hookey.dll");
-    if (module == NULL) return 111;
-    hookeyDLL.SetLogFile = (pSetLogFile) GetProcAddress(module, "SetLogFile");
-    hookeyDLL.SetKeyHooks = (pSetKeyHooks) GetProcAddress(module, "SetKeyHooks");
-
-    hookeyDLL.SetLogFile(logfp);
-
     // Create a structure.
     KeyCeptSettings* keycept = (KeyCeptSettings*) calloc(1, sizeof(KeyCeptSettings));
     if (keycept == NULL) return 111;
-    keycept->timerInterval = 500;
+    keycept->timerInterval = 200;
     keycept->trayName = L"KeyCept Tray";
-    keycept->dialogName = L"KeyCept Dialog";
     // Load resources.
     keycept->iconKeyCeptOff = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_OFF));
     if (keycept->iconKeyCeptOff == NULL) return 111;
     keycept->iconKeyCeptOn = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_ON));
     if (keycept->iconKeyCeptOn == NULL) return 111;
+    // Load a DLL.
+    keycept->module = LoadLibrary(L"hookey.dll");
+    if (keycept->module == NULL) return 111;
+    keycept->hookeyDLL.SetLogFile = \
+        (pSetLogFile) GetProcAddress(keycept->module, "SetLogFile");
+    keycept->hookeyDLL.SetKeyHooks = \
+        (pSetKeyHooks) GetProcAddress(keycept->module, "SetKeyHooks");
+    keycept->hookeyDLL.GetLastKey = \
+        (pGetLastKey) GetProcAddress(keycept->module, "GetLastKey");
+    keycept->hookeyDLL.SetLogFile(logfp);
+    keycept->enabled = TRUE;
 
     // Register the window class.
     {
@@ -427,18 +449,6 @@ int KeyCeptMain(
 	wc.lpszClassName = L"KeyCeptTrayWindowClass";
 	keycept->trayWindowAtom = RegisterClass(&wc);
     }
-    {
-	WNDCLASS wc;
-	ZeroMemory(&wc, sizeof(wc));
-	wc.lpfnWndProc = keyceptTrayWndProc;
-	wc.hInstance = hInstance;
-	wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-	wc.lpfnWndProc = keyceptDialogWndProc;
-	wc.lpszClassName = L"KeyCeptDialogWindowClass";
-	keycept->dialogWindowAtom = RegisterClass(&wc);
-    }
 
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
@@ -449,16 +459,21 @@ int KeyCeptMain(
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	NULL, NULL, hInstance, keycept);
     UpdateWindow(hWnd);
-
+    
     // Event loop.
     MSG msg;
     while (0 < GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        if (keycept->dialogHWnd != NULL &&
+            IsDialogMessage(keycept->dialogHWnd, &msg)) {
+            // do nothing.
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
 
+    FreeLibrary(keycept->module);
     free(keycept);
-    FreeLibrary(module);
 
     return (int)msg.wParam;
 }

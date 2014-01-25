@@ -13,12 +13,15 @@
 extern "C" {
     __declspec(dllexport) void SetLogFile(FILE* logfp);
     __declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, unsigned int nentries);
+    __declspec(dllexport) void GetLastKey(DWORD* vkCode, DWORD* scanCode);
 }
 
 static FILE* _logfp = NULL;
 static HHOOK _hook = NULL;
 static KeyHookEntry* _entries = NULL;
 static unsigned int _nentries = 0;
+static DWORD _vkCode = 0;
+static DWORD _scanCode = 0;
 
 static BOOL findKeyHook(DWORD* vkCode, DWORD* scanCode)
 {
@@ -50,19 +53,20 @@ static LRESULT CALLBACK keyboardProc(
             }
             DWORD vkCode = kdb->vkCode;
             DWORD scanCode = kdb->scanCode;
+            BOOL extended = ((kdb->flags & LLKHF_EXTENDED) == LLKHF_EXTENDED);
+            BOOL keyup = ((kdb->flags & LLKHF_UP) == LLKHF_UP);
             if (findKeyHook(&vkCode, &scanCode)) {
                 if (_logfp != NULL) {
                     fprintf(_logfp, " INJECT: vkCode=%u, scanCode=%u\n", vkCode, scanCode);
                 }
-                DWORD flags = 0;
-                if ((kdb->flags & LLKHF_EXTENDED) == LLKHF_EXTENDED) {
-                    flags |= KEYEVENTF_EXTENDEDKEY;
-                }
-                if ((kdb->flags & LLKHF_UP) == LLKHF_UP) {
-                    flags |= KEYEVENTF_KEYUP;
-                }
+                DWORD flags = (((extended)? KEYEVENTF_EXTENDEDKEY : 0) |
+                               ((keyup)? KEYEVENTF_KEYUP : 0));
                 keybd_event(vkCode, scanCode, flags, NULL);
                 return TRUE;
+            }
+            if (!keyup) {
+                _vkCode = vkCode;
+                _scanCode = scanCode;
             }
         }
     }
@@ -85,6 +89,12 @@ __declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, unsigned int nentr
         memcpy(_entries, entries, nentries*sizeof(KeyHookEntry));
         _nentries = nentries;
     }
+}
+
+__declspec(dllexport) void GetLastKey(DWORD* pvkCode, DWORD* pscanCode)
+{
+    *pvkCode = _vkCode;
+    *pscanCode = _scanCode;
 }
 
 BOOL WINAPI DllMain(
