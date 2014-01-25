@@ -12,17 +12,19 @@
 
 extern "C" {
     __declspec(dllexport) void SetLogFile(FILE* logfp);
-    __declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, int nentries);
+    __declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, unsigned int nentries);
 }
 
 static FILE* _logfp = NULL;
 static HHOOK _hook = NULL;
 static KeyHookEntry* _entries = NULL;
-static int _nentries = 0;
+static unsigned int _nentries = 0;
 
 static BOOL findKeyHook(DWORD* vkCode, DWORD* scanCode)
 {
-    for (int i = 0; i < _nentries; i++) {
+    if (_entries == NULL) return FALSE;
+
+    for (unsigned int i = 0; i < _nentries; i++) {
         KeyHookEntry* ent = &(_entries[i]);
         if (ent->vkCode0 == *vkCode &&
             ent->scanCode0 == *scanCode) {
@@ -72,10 +74,17 @@ __declspec(dllexport) void SetLogFile(FILE* logfp)
     _logfp = logfp;
 }
 
-__declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, int nentries)
+__declspec(dllexport) void SetKeyHooks(KeyHookEntry* entries, unsigned int nentries)
 {
-    _entries = entries;
-    _nentries = nentries;
+    if (_entries != NULL) {
+        free(_entries);
+        _entries = NULL;
+    }
+    _entries = (KeyHookEntry*) calloc(nentries, sizeof(KeyHookEntry));
+    if (_entries != NULL) {
+        memcpy(_entries, entries, nentries*sizeof(KeyHookEntry));
+        _nentries = nentries;
+    }
 }
 
 BOOL WINAPI DllMain(
@@ -85,7 +94,7 @@ BOOL WINAPI DllMain(
 {
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
-        fprintf(stderr, "ATTACH\n");
+        //fprintf(stderr, "ATTACH\n");
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardProc, hInstance, 0);
         return (_hook != NULL);
 
@@ -94,7 +103,11 @@ BOOL WINAPI DllMain(
             UnhookWindowsHookEx(_hook);
             _hook = NULL;
         }
-        fprintf(stderr, "DETACH\n");
+        if (_entries != NULL) {
+            free(_entries);
+            _entries = NULL;
+        }
+        //fprintf(stderr, "DETACH\n");
         return TRUE;
 
     default:

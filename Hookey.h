@@ -12,7 +12,7 @@ typedef struct _KeyHookEntry
 } KeyHookEntry;
 
 typedef void (*pSetLogFile)(FILE* logfp);
-typedef void (*pSetKeyHooks)(KeyHookEntry* entries, int nentries);
+typedef void (*pSetKeyHooks)(KeyHookEntry* entries, unsigned int nentries);
 
 typedef struct _HookeyDLL
 {
