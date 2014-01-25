@@ -23,7 +23,9 @@ all: $(TARGETS)
 
 release: clean
 	$(MAKE) $(TARGETS) DEFS="$(DEFS_WINDOWS)"
-	$(COPY) $(TARGETS) $(DESTDIR)
+	$(COPY) KeyCept.exe $(DESTDIR)
+	$(COPY) KeyCept.ini $(DESTDIR)
+	$(COPY) Hookey.dll $(DESTDIR)
 
 test:
 	$(MAKE) $(TARGETS)
