@@ -33,7 +33,7 @@ clean:
 	-$(DEL) $(TARGETS)
 	-$(DEL) *.lib *.exp *.obj *.res *.ilk *.pdb *.manifest
 
-KeyCept.exe: KeyCept.obj KeyCept.res
+KeyCept.exe: KeyCept.obj ini.obj KeyCept.res
 	$(LINK) $(LDFLAGS) /manifest /out:$@ $** $(LIBS)
 	$(MT) -manifest $@.manifest -outputresource:$@;1
 
@@ -47,6 +47,7 @@ Hookey.obj: Hookey.cpp
 KeyCept.cpp: Resource.h Hookey.h
 KeyCept.rc: Resource.h KeyCeptOn.ico KeyCeptOff.ico
 Hookey.cpp: Hookey.h
+ini.c: ini.h
 
 .cpp.obj:
 	$(CL) $(CFLAGS) /Fo$@ /c $< $(DEFS) $(INCLUDES)
