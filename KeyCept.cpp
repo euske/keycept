@@ -55,14 +55,6 @@ static BOOL setClipboardText(HWND hWnd, LPCWSTR text)
 
 //  KeyCept
 // 
-const LPCWSTR TARGET_WINDOW_CLASS = L"ConsoleWindowClass";
-static KeyHookEntry hooks[] = {
-    { 40, 80,   98, 80, },     // DOWN -> VK_2
-    { 37, 75,  100, 75, },     // LEFT -> VK_4
-    { 39, 77,  102, 77, },     // RIGHT -> VK_6
-    { 38, 72,  104, 72, },     // UP -> VK_8
-};
-
 typedef struct _KeyCeptHook
 {
     LPWSTR className;
@@ -79,8 +71,9 @@ typedef struct _KeyCeptSettings
     HookeyDLL hookeyDLL;
     ATOM trayWindowAtom;
     LPCWSTR trayName;
-    HICON iconKeyCeptOff;
     HICON iconKeyCeptOn;
+    HICON iconKeyCeptOff;
+    HICON iconKeyCeptDisabled;
     UINT timerInterval;
     HWND dialogHWnd;
     BOOL enabled;
@@ -156,7 +149,7 @@ static BOOL keyceptLoadConfig(KeyCeptSettings* settings)
 
 //  keyceptUpdateStatus
 //
-static BOOL keyceptUpdateStatus(KeyCeptSettings* settings, HWND hWnd)
+static KeyCeptHook* keyceptUpdateStatus(KeyCeptSettings* settings, HWND hWnd)
 {
     KeyCeptHook* found = NULL;
     WCHAR name[256];
@@ -183,7 +176,8 @@ static BOOL keyceptUpdateStatus(KeyCeptSettings* settings, HWND hWnd)
     } else {
         settings->hookeyDLL.SetKeyHooks(NULL, 0);
     }
-    return (found != NULL);
+
+    return found;
 }
 
 
@@ -354,10 +348,8 @@ static LRESULT CALLBACK keyceptTrayWndProc(
         nidata.cbSize = sizeof(nidata);
         nidata.hWnd = hWnd;
         nidata.uID = self->iconId;
-        nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        nidata.uFlags = NIF_MESSAGE;
         nidata.uCallbackMessage = WM_USER_ICON_EVENT;
-        nidata.hIcon = self->settings->iconKeyCeptOff;
-        StringCchCopy(nidata.szTip, _countof(nidata.szTip), KEYCEPT_NAME);
         Shell_NotifyIcon(NIM_ADD, &nidata);
         SetTimer(hWnd, self->timerId, self->settings->timerInterval, NULL);
 
@@ -452,7 +444,6 @@ static LRESULT CALLBACK keyceptTrayWndProc(
         KeyCeptTray* self = (KeyCeptTray*)lp;
         if (self != NULL) {
             keyceptLoadConfig(self->settings);
-            BOOL ison = keyceptUpdateStatus(self->settings, self->lastFHWnd);
             SendMessage(hWnd, WM_USER_STATE_CHANGED, 0, 0);
         }
         return FALSE;
@@ -477,8 +468,8 @@ static LRESULT CALLBACK keyceptTrayWndProc(
                     SetMenuItemInfo(menu, IDM_TOGGLE, FALSE, &info);
                 }
             }
-            BOOL ison = keyceptUpdateStatus(self->settings, self->lastFHWnd);
-            SendMessage(hWnd, WM_USER_ICON_CHANGED, ison, 0);
+            KeyCeptHook* active = keyceptUpdateStatus(self->settings, self->lastFHWnd);
+            SendMessage(hWnd, WM_USER_ICON_CHANGED, 0, (LPARAM)active);
         }
         return FALSE;
     }
@@ -491,8 +482,8 @@ static LRESULT CALLBACK keyceptTrayWndProc(
             if (self->settings->dialogHWnd != NULL) {
                 SendMessage(self->settings->dialogHWnd, uMsg, wParam, lParam);
             }
-            BOOL ison = keyceptUpdateStatus(self->settings, (HWND)lParam);
-            SendMessage(hWnd, WM_USER_ICON_CHANGED, ison, 0);
+            KeyCeptHook* active = keyceptUpdateStatus(self->settings, (HWND)lParam);
+            SendMessage(hWnd, WM_USER_ICON_CHANGED, 0, (LPARAM)active);
         }
         return FALSE;
     }
@@ -514,14 +505,24 @@ static LRESULT CALLBACK keyceptTrayWndProc(
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
         KeyCeptTray* self = (KeyCeptTray*)lp;
         if (self != NULL) {
+            KeyCeptHook* active = (KeyCeptHook*)lParam;
             NOTIFYICONDATA nidata = {0};
             nidata.cbSize = sizeof(nidata);
             nidata.hWnd = hWnd;
             nidata.uID = self->iconId;
-            nidata.uFlags = NIF_ICON;
-            nidata.hIcon = ((wParam)? 
-                            self->settings->iconKeyCeptOn : 
-                            self->settings->iconKeyCeptOff);
+            nidata.uFlags = NIF_ICON | NIF_TIP;
+            nidata.hIcon = self->settings->iconKeyCeptDisabled;
+            StringCchCopy(nidata.szTip, _countof(nidata.szTip), KEYCEPT_NAME);
+            if (self->settings->enabled) {
+                if (active != NULL) {
+                    nidata.hIcon = self->settings->iconKeyCeptOn;
+                    StringCchPrintf(nidata.szTip, _countof(nidata.szTip), 
+                                    L"Active: %s (%d keys)", 
+                                    active->className, active->nentries);
+                } else {
+                    nidata.hIcon = self->settings->iconKeyCeptOff;
+                }
+            }
             Shell_NotifyIcon(NIM_MODIFY, &nidata);
         }
         return FALSE;
@@ -585,10 +586,12 @@ int KeyCeptMain(
     keycept->timerInterval = 200;
     keycept->trayName = L"KeyCept Tray";
     // Load resources.
-    keycept->iconKeyCeptOff = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_OFF));
-    if (keycept->iconKeyCeptOff == NULL) return 111;
     keycept->iconKeyCeptOn = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_ON));
     if (keycept->iconKeyCeptOn == NULL) return 111;
+    keycept->iconKeyCeptOff = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_OFF));
+    if (keycept->iconKeyCeptOff == NULL) return 111;
+    keycept->iconKeyCeptDisabled = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_DISABLED));
+    if (keycept->iconKeyCeptDisabled == NULL) return 111;
     // Load a DLL.
     keycept->hModule = LoadLibrary(L"hookey.dll");
     if (keycept->hModule == NULL) return 111;

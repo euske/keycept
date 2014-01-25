@@ -21,10 +21,9 @@ DESTDIR=%UserProfile%\bin
 
 all: $(TARGETS)
 
-release: clean
+install: clean
 	$(MAKE) $(TARGETS) DEFS="$(DEFS_WINDOWS)"
 	$(COPY) KeyCept.exe $(DESTDIR)
-	$(COPY) KeyCept.ini $(DESTDIR)
 	$(COPY) Hookey.dll $(DESTDIR)
 
 test:
