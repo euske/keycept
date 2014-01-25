@@ -150,6 +150,7 @@ static BOOL keyceptLoadConfig(KeyCeptSettings* settings)
         settings->hooks = hook->next;
     }
     ini_parse_file(fp, keyceptINIHandler, settings);
+    fclose(fp);
     return TRUE;
 }
 
