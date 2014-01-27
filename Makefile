@@ -4,7 +4,7 @@ DEL=del /f
 COPY=copy /y
 MT=mt -nologo
 CL=cl /nologo
-RC=rc /nologo
+RC=rc
 LINK=link /nologo
 
 CFLAGS=/MD /O2 /GA /Zi
