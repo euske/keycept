@@ -59,9 +59,11 @@ static LRESULT CALLBACK keyboardProc(
                 if (_logfp != NULL) {
                     fprintf(_logfp, " INJECT: vkCode=%u, scanCode=%u\n", vkCode, scanCode);
                 }
-                DWORD flags = (((extended)? KEYEVENTF_EXTENDEDKEY : 0) |
-                               ((keyup)? KEYEVENTF_KEYUP : 0));
-                keybd_event(vkCode, scanCode, flags, NULL);
+                if (vkCode != 0 || scanCode != 0) {
+                    DWORD flags = (((extended)? KEYEVENTF_EXTENDEDKEY : 0) |
+                                   ((keyup)? KEYEVENTF_KEYUP : 0));
+                    keybd_event(vkCode, scanCode, flags, NULL);
+                }
                 return TRUE;
             }
             if (!keyup) {
