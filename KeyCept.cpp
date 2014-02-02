@@ -29,6 +29,8 @@ enum {
 // logging file.
 static FILE* logfp = NULL;
 
+// setClipboardText(hwnd, text)
+//   Copy the text to the clipboard.
 static BOOL setClipboardText(HWND hWnd, LPCWSTR text)
 {
     if (OpenClipboard(hWnd)) {
@@ -74,15 +76,16 @@ typedef struct _KeyCeptSettings
     HICON iconKeyCeptOn;
     HICON iconKeyCeptOff;
     HICON iconKeyCeptDisabled;
+    WCHAR defaultConfig[1024];
     UINT timerInterval;
     HWND dialogHWnd;
     BOOL enabled;
     KeyCeptHook* hooks;
 } KeyCeptSettings;
 
-//  createHook
+//  keyceptCreateHook
 //    Creates a new KeyCeptHook structure.
-static KeyCeptHook* createHook(const wchar_t* name)
+static KeyCeptHook* keyceptCreateHook(const wchar_t* name)
 {
     KeyCeptHook* hook = (KeyCeptHook*) calloc(1, sizeof(KeyCeptHook));
     if (hook == NULL) exit(111);
@@ -127,7 +130,7 @@ static int keyceptINIHandler(void* user, const char* section,
         }
         // Create one if it doesn't exist.
         if (found == NULL) {
-            found = createHook(wsection);
+            found = keyceptCreateHook(wsection);
             // Insert it as a second hook. 
             // (The first one is reserved for global.)
             found->next = settings->hooks->next;
@@ -169,19 +172,36 @@ static BOOL keyceptLoadConfig(KeyCeptSettings* settings)
 {
     fwprintf(stderr, L"loadConfig=%s\n", settings->configPath);
 
-    // Open the .ini file.
-    FILE* fp = NULL;
-    if (_wfopen_s(&fp, settings->configPath, L"r") != 0) return FALSE;
-
     // Clear all the hooks.
     keyceptClearConfig(settings);
     // Add the global hook as the first hook.
-    settings->hooks = createHook(L"global");
+    settings->hooks = keyceptCreateHook(L"global");
 
-    ini_parse_file(fp, keyceptINIHandler, settings);
-    fclose(fp);
-
+    // Open the .ini file.
+    {
+        FILE* fp = NULL;
+        if (_wfopen_s(&fp, settings->configPath, L"r") == 0) {
+            ini_parse_file(fp, keyceptINIHandler, settings);
+            fclose(fp);
+        }
+    }
     return TRUE;
+}
+
+//  keyceptCreateDefaultConfig
+//    Create a default .ini file.
+static void keyceptCreateDefaultConfig(KeyCeptSettings* settings)
+{
+    fwprintf(stderr, L"createDefaultConfig=%s\n", settings->configPath);
+    
+    // Create the config file.
+    {
+        FILE* fp = NULL;
+        if (_wfopen_s(&fp, settings->configPath, L"w") == 0) {
+            fputws(settings->defaultConfig, fp);
+            fclose(fp);
+        }
+    }
 }
 
 //  keyceptUpdateStatus
@@ -286,6 +306,10 @@ static INT_PTR CALLBACK keyceptDialogProc(
             // Open the config file in Explorer.
             if (self != NULL) {
                 LPCWSTR path = self->settings->configPath;
+                // Create one if the file doesn't exist.
+                if (GetFileAttributes(path) == INVALID_FILE_ATTRIBUTES) {
+                    keyceptCreateDefaultConfig(self->settings);
+                }
                 ShellExecute(NULL, L"open", path, NULL, NULL, SW_SHOWDEFAULT);
             }
             break;
@@ -672,7 +696,9 @@ int KeyCeptMain(
     if (settings->iconKeyCeptOff == NULL) return 111;
     settings->iconKeyCeptDisabled = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_DISABLED));
     if (settings->iconKeyCeptDisabled == NULL) return 111;
-
+    LoadString(hInstance, IDS_DEFAULT_CONFIG, 
+               settings->defaultConfig, _countof(settings->defaultConfig));
+    
     // Load a DLL.
     settings->hModule = LoadLibrary(L"hookey.dll");
     if (settings->hModule == NULL) return 111;

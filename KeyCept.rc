@@ -60,3 +60,8 @@ BEGIN
     PUSHBUTTON "Open Config File", IDC_BUTTON_OPEN, 5, 60, 190, 15
     PUSHBUTTON "Reload Config File", IDC_BUTTON_RELOAD, 5, 80, 190, 15
 END
+
+STRINGTABLE
+BEGIN
+    IDS_DEFAULT_CONFIG ";; Keycept.ini\n\n[global]\nenabled = 1\n\n"
+END
