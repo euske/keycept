@@ -685,9 +685,26 @@ int KeyCeptMain(
 
     // Create a structure.
     KeyCeptSettings* settings = (KeyCeptSettings*) calloc(1, sizeof(KeyCeptSettings));
-    if (settings == NULL) exit(111);
+    if (settings == NULL) return 111;
     settings->timerInterval = 200;
     settings->trayName = L"KeyCept Tray";
+
+    // Load a DLL.
+    settings->hModule = LoadLibrary(L"hookey.dll");
+    if (settings->hModule == NULL) {
+        MessageBox(NULL, 
+                   L"hookey.dll is not found.", 
+                   L"KeyCept", 
+                   MB_ICONERROR | MB_OK);
+        return 111;
+    }
+    settings->hookeyDLL.SetLogFile = \
+        (pSetLogFile) GetProcAddress(settings->hModule, "SetLogFile");
+    settings->hookeyDLL.SetKeyHooks = \
+        (pSetKeyHooks) GetProcAddress(settings->hModule, "SetKeyHooks");
+    settings->hookeyDLL.GetLastKey = \
+        (pGetLastKey) GetProcAddress(settings->hModule, "GetLastKey");
+    settings->hookeyDLL.SetLogFile(logfp);
 
     // Load resources.
     settings->iconKeyCeptOn = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_KEYCEPT_ON));
@@ -699,17 +716,6 @@ int KeyCeptMain(
     LoadString(hInstance, IDS_DEFAULT_CONFIG, 
                settings->defaultConfig, _countof(settings->defaultConfig));
     
-    // Load a DLL.
-    settings->hModule = LoadLibrary(L"hookey.dll");
-    if (settings->hModule == NULL) return 111;
-    settings->hookeyDLL.SetLogFile = \
-        (pSetLogFile) GetProcAddress(settings->hModule, "SetLogFile");
-    settings->hookeyDLL.SetKeyHooks = \
-        (pSetKeyHooks) GetProcAddress(settings->hModule, "SetKeyHooks");
-    settings->hookeyDLL.GetLastKey = \
-        (pGetLastKey) GetProcAddress(settings->hModule, "GetLastKey");
-    settings->hookeyDLL.SetLogFile(logfp);
-
     // Set the ini file path.
     WCHAR path[MAX_PATH];
     WCHAR basedir[MAX_PATH];

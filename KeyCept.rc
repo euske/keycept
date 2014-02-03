@@ -63,5 +63,5 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_DEFAULT_CONFIG ";; Keycept.ini\n\n[global]\nenabled = 1\n\n"
+    IDS_DEFAULT_CONFIG ";; Keycept.ini\n\n[Global]\nEnabled = 1\n\n"
 END

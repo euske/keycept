@@ -26,8 +26,7 @@ install: clean
 	$(COPY) KeyCept.exe $(DESTDIR)
 	$(COPY) Hookey.dll $(DESTDIR)
 
-test:
-	$(MAKE) $(TARGETS)
+test: $(TARGETS)
 	.\KeyCept.exe
 
 clean:
