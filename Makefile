@@ -6,6 +6,7 @@ MT=mt -nologo
 CL=cl /nologo
 RC=rc
 LINK=link /nologo
+ZIP=zip
 
 CFLAGS=/MD /O2 /GA /Zi
 LDFLAGS=/DEBUG /OPT:REF /OPT:ICF
@@ -30,8 +31,14 @@ test: $(TARGETS)
 	.\KeyCept.exe
 
 clean:
+	-$(DEL) KeyCept.zip
 	-$(DEL) $(TARGETS)
 	-$(DEL) *.lib *.exp *.obj *.res *.ilk *.pdb *.manifest
+
+pack: KeyCept.zip
+
+KeyCept.zip: $(TARGETS) README.md
+	$(ZIP) $@ $(TARGETS) README.md
 
 KeyCept.exe: KeyCept.obj ini.obj KeyCept.res
 	$(LINK) $(LDFLAGS) /manifest /out:$@ $** $(LIBS)
