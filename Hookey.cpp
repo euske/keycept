@@ -23,6 +23,8 @@ static unsigned int _nentries = 0;
 static DWORD _vkCode = 0;
 static DWORD _scanCode = 0;
 
+static const LONG DELTA = 4;
+
 static BOOL findKeyHook(DWORD* vkCode, DWORD* scanCode)
 {
     if (_entries == NULL) return FALSE;
@@ -59,10 +61,49 @@ static LRESULT CALLBACK keyboardProc(
                 if (_logfp != NULL) {
                     fprintf(_logfp, " INJECT: vkCode=%u, scanCode=%u\n", vkCode, scanCode);
                 }
-                if (vkCode != 0 || scanCode != 0) {
-                    DWORD flags = (((extended)? KEYEVENTF_EXTENDEDKEY : 0) |
-                                   ((keyup)? KEYEVENTF_KEYUP : 0));
-                    keybd_event(vkCode, scanCode, flags, NULL);
+                if (vkCode != 0) {
+                    INPUT input = {0};
+                    if (scanCode) {
+                        // Emit a keyboard event.
+                        input.type = INPUT_KEYBOARD;
+                        input.ki.wVk = vkCode;
+                        input.ki.wScan = scanCode;
+                        input.ki.dwFlags = (((extended)? KEYEVENTF_EXTENDEDKEY : 0) |
+                                            ((keyup)? KEYEVENTF_KEYUP : 0));
+                    } else {
+                        // Emit a mouse event.
+                        input.type = INPUT_MOUSE;
+                        switch (vkCode) {
+                        case 0x31: // 1
+                            input.mi.dwFlags = ((keyup)? 
+                                                MOUSEEVENTF_LEFTUP : 
+                                                MOUSEEVENTF_LEFTDOWN);
+                            break;
+                        case 0x32: // 2
+                            input.mi.dwFlags = ((keyup)? 
+                                                MOUSEEVENTF_RIGHTUP : 
+                                                MOUSEEVENTF_RIGHTDOWN);
+                            break;
+
+                        case VK_LEFT:
+                            input.mi.dx = -DELTA;
+                            input.mi.dwFlags = ((!keyup)? MOUSEEVENTF_MOVE : 0);
+                            break;
+                        case VK_RIGHT:
+                            input.mi.dx = +DELTA;
+                            input.mi.dwFlags = ((!keyup)? MOUSEEVENTF_MOVE : 0);
+                            break;
+                        case VK_UP:
+                            input.mi.dy = -DELTA;
+                            input.mi.dwFlags = ((!keyup)? MOUSEEVENTF_MOVE : 0);
+                            break;
+                        case VK_DOWN:
+                            input.mi.dy = +DELTA;
+                            input.mi.dwFlags = ((!keyup)? MOUSEEVENTF_MOVE : 0);
+                            break;
+                        }
+                    }
+                    SendInput(1, &input, sizeof(input));
                 }
                 return TRUE;
             }
